@@ -24,7 +24,7 @@ async function download(client){
       const response=await fetch(urlFor(chunk.name),{cache:'no-store',credentials:'same-origin'});
       if(!response.ok)throw new Error('下载失败：'+response.status);
       const buffer=await response.arrayBuffer();
-      if(buffer.byteLength!==chunk.bytes)throw new Error('文件大小不符，请联网重新登录后重试。');
+      if(buffer.byteLength!==chunk.bytes)throw new Error('文件大小不符，请检查网络后重试。');
       const digest=await crypto.subtle.digest('SHA-256',buffer);
       const hex=[...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
       if(hex!==chunk.sha256)throw new Error('文件校验失败，请重试。');
