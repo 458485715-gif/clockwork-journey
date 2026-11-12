@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="发条远行">
+<meta name="theme-color" content="#102e2a">
+<title>发条远行</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#081b1b;color:#c9e2d6;font-family:system-ui,sans-serif;touch-action:none;overscroll-behavior:none;-webkit-user-select:none;user-select:none}
+body{display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#canvas{display:block;width:min(100vw,177.7778vh);height:min(100vh,56.25vw);outline:none;touch-action:none}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:20px;padding:32px;text-align:center;background:#102e2a;z-index:3}
+h1{font-weight:500;letter-spacing:.2em;margin:0}p{max-width:560px;line-height:1.8;margin:0;color:#9dbfaf;font-size:15px}
+progress{width:min(320px,80vw);height:8px;accent-color:#97c7b1}button{padding:16px 36px;background:#294e43;color:#e2efe7;border:1px solid #729786;border-radius:12px;font:inherit;cursor:pointer}
+#rotate{position:fixed;inset:0;display:none;align-items:center;justify-content:center;text-align:center;background:#102e2af5;z-index:4;font-size:22px}
+@media(orientation:portrait) and (pointer:coarse){#rotate{display:flex}}
+</style>
+<link id="-gd-engine-icon" rel="icon" type="image/png" href="index.icon.png" />
+<link rel="apple-touch-icon" href="index.apple-touch-icon.png"/>
+<link rel="manifest" href="index.manifest.json">
+
+</head>
+<body>
+<canvas id="canvas" width="1280" height="720" tabindex="0">请使用支持 WebGL 2 的 Safari。</canvas>
+<section id="loading"><h1>发条远行</h1><p id="message">第 1–9 关 · 横屏游玩<br>左手跳跃、攻击 · 右手摇杆移动</p><progress id="progress" value="0" max="1" hidden></progress><button id="start">进入游戏</button><p id="connection"></p></section>
+<div id="rotate">请将 iPad 横过来游玩</div>
+<script src="index.js"></script>
+<script>
+const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":31403476,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+'use strict';
+config.serviceWorker = ''; // Managed by the game installer, including large-file integrity checks.
+const engine = new Engine(config);
+const start = document.getElementById('start');
+const progress = document.getElementById('progress');
+const message = document.getElementById('message');
+const connection = document.getElementById('connection');
+let installed=false, registration=null, busy=false;
+connection.textContent='首次联网下载完整游戏。显示“离线就绪”后，电脑关机也能玩。';
+start.textContent='下载并准备离线游戏';
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
+function failure(error){busy=false;start.disabled=false;start.hidden=false;start.textContent='重试';message.textContent=String(error.message||error);}
+async function setup(){
+  if(!window.isSecureContext||!('serviceWorker' in navigator))throw new Error('离线版需要用 Safari 打开 HTTPS 链接，请勿直接打开本地 HTML 文件。');
+  const current=await navigator.serviceWorker.getRegistration('./');
+  registration=current||await navigator.serviceWorker.register('./offline-worker.js',{scope:'./'});
+  await navigator.serviceWorker.ready;
+  if(!navigator.serviceWorker.controller)await new Promise((resolve,reject)=>{
+    const timeout=setTimeout(()=>reject(new Error('离线组件未就绪，请刷新重试。')),15000);
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve()},{once:true});
+  });
+  navigator.serviceWorker.controller.postMessage({type:'STATUS'});
+}
+navigator.serviceWorker?.addEventListener('message',event=>{
+  const m=event.data;
+  if(m.type==='PROGRESS'){progress.hidden=false;progress.max=m.total;progress.value=m.loaded;message.textContent='正在保存到本机 '+Math.round(m.loaded/m.total*100)+'% · 请保持此页面打开';}
+  if(m.type==='STATUS'&&m.ready||m.type==='READY'){
+    installed=true;busy=false;start.disabled=false;start.hidden=false;start.textContent='开始游戏';progress.hidden=true;
+    message.textContent='离线就绪 · 第 1–9 关已保存在本机';
+    connection.textContent='Safari 分享 → 添加到主屏幕。请从主屏幕图标打开一次，确认显示“离线就绪”。';
+    window.offlineReady=true;
+  }
+  if(m.type==='ERROR')failure(m.message);
+});
+const setupPromise=setup().catch(error=>{failure(error);throw error;});
+setupPromise.catch(()=>{});
+start.addEventListener('click',async()=>{
+  if(busy)return;
+  busy=true;start.disabled=true;
+  try{
+    await setupPromise;
+    if(!installed){
+      if(navigator.storage?.persist)await navigator.storage.persist().catch(()=>{});
+      message.textContent='正在下载离线游戏，请稍候…';progress.hidden=false;
+      navigator.serviceWorker.controller.postMessage({type:'INSTALL'});return;
+    }
+    const missing=Engine.getMissingFeatures({threads:false});
+    if(missing.length)throw new Error('iPad 浏览器缺少 '+missing.join('、')+'，请升级 iPadOS 后重试。');
+    start.hidden=true;message.textContent='正在启动游戏…';
+    await engine.startGame({canvas:document.getElementById('canvas'),canvasResizePolicy:0});
+    document.getElementById('loading').remove();document.getElementById('canvas').focus();window.gameReady=true;
+  }catch(error){console.error(error);failure(error);}
+});
+
+</script>
+</body>
+</html>
+
