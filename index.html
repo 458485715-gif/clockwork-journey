@@ -25,11 +25,11 @@ progress{width:min(320px,80vw);height:8px;accent-color:#97c7b1}button{padding:16
 </head>
 <body>
 <canvas id="canvas" width="1280" height="720" tabindex="0">请使用支持 WebGL 2 的 Safari。</canvas>
-<section id="loading"><h1>发条远行</h1><p id="message">第 1–9 关 · 横屏游玩<br>左手跳跃、攻击 · 右手摇杆移动</p><progress id="progress" value="0" max="1" hidden></progress><button id="start">进入游戏</button><p id="connection"></p></section>
+<section id="loading"><h1>发条远行</h1><p id="message">第 1–9 关 · 横屏游玩<br>左手摇杆移动 · 右手左攻击、右跳跃</p><progress id="progress" value="0" max="1" hidden></progress><button id="start">进入游戏</button><p id="connection"></p></section>
 <div id="rotate">请将 iPad 横过来游玩</div>
 <script src="index.js"></script>
 <script>
-const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":31403476,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":32042040,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 'use strict';
 config.serviceWorker = ''; // Managed by the game installer, including large-file integrity checks.
 const engine = new Engine(config);
@@ -46,7 +46,8 @@ function failure(error){busy=false;start.disabled=false;start.hidden=false;start
 async function setup(){
   if(!window.isSecureContext||!('serviceWorker' in navigator))throw new Error('离线版需要用 Safari 打开 HTTPS 链接，请勿直接打开本地 HTML 文件。');
   const current=await navigator.serviceWorker.getRegistration('./');
-  registration=current||await navigator.serviceWorker.register('./offline-worker.js',{scope:'./'});
+  registration=await navigator.serviceWorker.register('./offline-worker.js',{scope:'./'});
+  if(current && navigator.onLine) registration.update().catch(()=>{});
   await navigator.serviceWorker.ready;
   if(!navigator.serviceWorker.controller)await new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>reject(new Error('离线组件未就绪，请刷新重试。')),15000);
