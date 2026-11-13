@@ -9,7 +9,14 @@ self.addEventListener('install', event => event.waitUntil((async()=>{
   await cache.addAll(BUILD.core.map(urlFor));
   await self.skipWaiting();
 })()));
-self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('activate', event => event.waitUntil((async()=>{
+  const upgrading=(await caches.keys()).some(name=>name.startsWith('clockwork-ipad-')&&name!==CACHE);
+  await self.clients.claim();
+  // Move old installer shells onto this build before they can start mismatched game files.
+  if(upgrading)for(const client of await self.clients.matchAll({type:'window'})){
+    if(client.url.startsWith(self.registration.scope))await client.navigate(client.url);
+  }
+})()));
 async function ready(cache){
   return (await Promise.all([...BUILD.core,...BUILD.files.map(f=>f.name)].map(n=>cache.match(urlFor(n))))).every(Boolean);
 }
