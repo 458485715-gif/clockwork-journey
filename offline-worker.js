@@ -1,5 +1,5 @@
 'use strict';
-const BUILD = {"version": "97e3a3f88f7a164c", "core": ["index.144x144.png", "index.180x180.png", "index.512x512.png", "index.apple-touch-icon.png", "index.audio.position.worklet.js", "index.audio.worklet.js", "index.html", "index.icon.png", "index.js", "index.manifest.json", "index.png"], "files": [{"name": "index.wasm", "mime": "application/wasm", "bytes": 39514754, "chunks": [{"name": "index.wasm.part0", "bytes": 8388608, "sha256": "8a56546b5f9b9137e80adde4400b797a5189062dee30d2505871ebd8e83987d3"}, {"name": "index.wasm.part1", "bytes": 8388608, "sha256": "62901720225c5663e708a233614396a6943357de7c98cead67f11669773dccae"}, {"name": "index.wasm.part2", "bytes": 8388608, "sha256": "c14dee0b88ada7bc7b4b48f3b8ae20e16922818417292b06082484fe183ae397"}, {"name": "index.wasm.part3", "bytes": 8388608, "sha256": "ca498a54fdb112b659cf23bc79a932e58d350a0f4cc8fabb639f230233ad6c72"}, {"name": "index.wasm.part4", "bytes": 5960322, "sha256": "219249da87c3cfda9a89fba24e253e60d6efd5191d0b108120ad93e51e54d707"}]}, {"name": "index.pck", "mime": "application/octet-stream", "bytes": 32042040, "chunks": [{"name": "index.pck.part0", "bytes": 8388608, "sha256": "19f5640280f016643610b4fbcebca77016f8cb4c0afbe542325758c983a7613a"}, {"name": "index.pck.part1", "bytes": 8388608, "sha256": "f57d7d6ea2b208562c97facc2780629ae338087be39af9d3a5bf9cc97a3f78f1"}, {"name": "index.pck.part2", "bytes": 8388608, "sha256": "7f9011489015656bbd2aabc212c5d576d01f52dfc57509abe88a1a4a3c48d994"}, {"name": "index.pck.part3", "bytes": 6876216, "sha256": "778a80c77613f9a082a6d29afdb38cd771cfcfeafcffea054d1e7e5858858acb"}]}]};
+const BUILD = {"version": "4fa819d21440eeeb", "core": ["index.144x144.png", "index.180x180.png", "index.512x512.png", "index.apple-touch-icon.png", "index.audio.position.worklet.js", "index.audio.worklet.js", "index.html", "index.icon.png", "index.js", "index.manifest.json", "index.png"], "files": [{"name": "index.wasm", "mime": "application/wasm", "bytes": 39514754, "chunks": [{"name": "index.wasm.part0", "bytes": 8388608, "sha256": "8a56546b5f9b9137e80adde4400b797a5189062dee30d2505871ebd8e83987d3"}, {"name": "index.wasm.part1", "bytes": 8388608, "sha256": "62901720225c5663e708a233614396a6943357de7c98cead67f11669773dccae"}, {"name": "index.wasm.part2", "bytes": 8388608, "sha256": "c14dee0b88ada7bc7b4b48f3b8ae20e16922818417292b06082484fe183ae397"}, {"name": "index.wasm.part3", "bytes": 8388608, "sha256": "ca498a54fdb112b659cf23bc79a932e58d350a0f4cc8fabb639f230233ad6c72"}, {"name": "index.wasm.part4", "bytes": 5960322, "sha256": "219249da87c3cfda9a89fba24e253e60d6efd5191d0b108120ad93e51e54d707"}]}, {"name": "index.pck", "mime": "application/octet-stream", "bytes": 32085016, "chunks": [{"name": "index.pck.part0", "bytes": 8388608, "sha256": "e18e267ecf6a00781d2d21fedac34758703244dce55ed9ce05fd545c79b65399"}, {"name": "index.pck.part1", "bytes": 8388608, "sha256": "f57d7d6ea2b208562c97facc2780629ae338087be39af9d3a5bf9cc97a3f78f1"}, {"name": "index.pck.part2", "bytes": 8388608, "sha256": "7f9011489015656bbd2aabc212c5d576d01f52dfc57509abe88a1a4a3c48d994"}, {"name": "index.pck.part3", "bytes": 6919192, "sha256": "ee6b179f3cad363dd021ffcbb6a24706430a92c859a07e6d92cff8fb1d0769d6"}]}]};
 const CACHE = 'clockwork-ipad-' + BUILD.version;
 const urlFor = name => new URL(name, self.registration.scope).href;
 const tell = (client, data) => { if(client) client.postMessage(data); };
@@ -10,12 +10,9 @@ self.addEventListener('install', event => event.waitUntil((async()=>{
   await self.skipWaiting();
 })()));
 self.addEventListener('activate', event => event.waitUntil((async()=>{
-  const upgrading=(await caches.keys()).some(name=>name.startsWith('clockwork-ipad-')&&name!==CACHE);
   await self.clients.claim();
-  // Move old installer shells onto this build before they can start mismatched game files.
-  if(upgrading)for(const client of await self.clients.matchAll({type:'window'})){
-    if(client.url.startsWith(self.registration.scope))await client.navigate(client.url);
-  }
+  // Never reload a running game from the worker. The installer handles version
+  // changes before launching; existing gameplay can finish without interruption.
 })()));
 async function ready(cache){
   return (await Promise.all([...BUILD.core,...BUILD.files.map(f=>f.name)].map(n=>cache.match(urlFor(n))))).every(Boolean);
@@ -58,10 +55,6 @@ self.addEventListener('fetch',event=>{
   event.respondWith((async()=>{
     const cache=await caches.open(CACHE);
     if(event.request.mode==='navigate'){
-      try {
-        const online=await fetch(event.request);
-        if(online.ok)return online;
-      } catch (_) {}
       const shell=await cache.match(urlFor('index.html'));
       if(shell)return shell;
     }

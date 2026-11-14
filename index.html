@@ -29,7 +29,7 @@ progress{width:min(320px,80vw);height:8px;accent-color:#97c7b1}button{padding:16
 <div id="rotate">请将 iPad 横过来游玩</div>
 <script src="index.js"></script>
 <script>
-const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":32042040,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
+const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":32085016,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 'use strict';
 config.serviceWorker = ''; // Managed by the game installer, including large-file integrity checks.
 const engine = new Engine(config);
@@ -38,11 +38,27 @@ const progress = document.getElementById('progress');
 const message = document.getElementById('message');
 const connection = document.getElementById('connection');
 let installed=false, registration=null, busy=false;
+const buildVersion='4fa819d21440eeeb';
+let starting=false;
 connection.textContent='首次联网下载完整游戏。显示“离线就绪”后，电脑关机也能玩。';
 start.textContent='下载并准备离线游戏';
 document.addEventListener('contextmenu',e=>e.preventDefault());
 document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
 function failure(error){busy=false;start.disabled=false;start.hidden=false;start.textContent='重试';message.textContent=String(error.message||error);}
+function checkVersion(m){
+  if(window.gameReady || starting)return false;
+  if(m.version && m.version!==buildVersion){
+    installed=false;window.offlineReady=false;
+    const key='clockwork-reload-'+m.version;
+    if(!sessionStorage.getItem(key)){sessionStorage.setItem(key,'1');location.reload();}
+    else {message.textContent='新版本准备中，请稍候关闭并重新打开。';start.disabled=true;}
+    return false;
+  }
+  return true;
+}
+navigator.serviceWorker?.addEventListener('controllerchange',()=>{
+  if(!window.gameReady && !starting)navigator.serviceWorker.controller?.postMessage({type:'STATUS'});
+});
 async function setup(){
   if(!window.isSecureContext||!('serviceWorker' in navigator))throw new Error('离线版需要用 Safari 打开 HTTPS 链接，请勿直接打开本地 HTML 文件。');
   const current=await navigator.serviceWorker.getRegistration('./');
@@ -57,6 +73,7 @@ async function setup(){
 }
 navigator.serviceWorker?.addEventListener('message',event=>{
   const m=event.data;
+  if((m.type==='STATUS'||m.type==='READY')&&!checkVersion(m))return;
   if(m.type==='PROGRESS'){progress.hidden=false;progress.max=m.total;progress.value=m.loaded;message.textContent='正在保存到本机 '+Math.round(m.loaded/m.total*100)+'% · 请保持此页面打开';}
   if(m.type==='STATUS'&&m.ready||m.type==='READY'){
     installed=true;busy=false;start.disabled=false;start.hidden=false;start.textContent='开始游戏';progress.hidden=true;
@@ -80,10 +97,10 @@ start.addEventListener('click',async()=>{
     }
     const missing=Engine.getMissingFeatures({threads:false});
     if(missing.length)throw new Error('iPad 浏览器缺少 '+missing.join('、')+'，请升级 iPadOS 后重试。');
-    start.hidden=true;message.textContent='正在启动游戏…';
+    starting=true;start.hidden=true;message.textContent='正在启动游戏…';
     await engine.startGame({canvas:document.getElementById('canvas'),canvasResizePolicy:0});
     document.getElementById('loading').remove();document.getElementById('canvas').focus();window.gameReady=true;
-  }catch(error){console.error(error);failure(error);}
+  }catch(error){starting=false;console.error(error);failure(error);}
 });
 
 </script>
