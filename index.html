@@ -27,80 +27,131 @@ progress{width:min(320px,80vw);height:8px;accent-color:#97c7b1}button{padding:16
 <canvas id="canvas" width="1280" height="720" tabindex="0">请使用支持 WebGL 2 的 Safari。</canvas>
 <section id="loading"><h1>发条远行</h1><p id="message">第 1–9 关 · 横屏游玩<br>左手摇杆移动 · 右手左攻击、右跳跃</p><progress id="progress" value="0" max="1" hidden></progress><button id="start">进入游戏</button><p id="connection"></p></section>
 <div id="rotate">请将 iPad 横过来游玩</div>
-<script src="index.js"></script>
+
 <script>
 const config = {"args":[],"canvasResizePolicy":0,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":32085016,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"index.service.worker.js"};
 'use strict';
-config.serviceWorker = ''; // Managed by the game installer, including large-file integrity checks.
-const engine = new Engine(config);
-const start = document.getElementById('start');
-const progress = document.getElementById('progress');
-const message = document.getElementById('message');
-const connection = document.getElementById('connection');
-let installed=false, registration=null, busy=false;
-const buildVersion='4fa819d21440eeeb';
-let starting=false;
-connection.textContent='首次联网下载完整游戏。显示“离线就绪”后，电脑关机也能玩。';
-start.textContent='下载并准备离线游戏';
-document.addEventListener('contextmenu',e=>e.preventDefault());
-document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
-function failure(error){busy=false;start.disabled=false;start.hidden=false;start.textContent='重试';message.textContent=String(error.message||error);}
-function checkVersion(m){
-  if(window.gameReady || starting)return false;
-  if(m.version && m.version!==buildVersion){
-    installed=false;window.offlineReady=false;
+config.serviceWorker='';
+const start=document.getElementById('start'),progress=document.getElementById('progress');
+const message=document.getElementById('message'),connection=document.getElementById('connection');
+const buildVersion='95343c998b9a22e8';
+let installed=false,busy=false,starting=false,needsReload=false,setupPromise=null,watchdog=null,lastProgress=0;
+let phase='checking',engine=null;
+const statusWaiters=new Set();
+window.loadingPhase=phase;
+function setPhase(value){phase=value;window.loadingPhase=value;}
+function deadline(promise,ms,text){let timer;return Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error(text)),ms);})]).finally(()=>clearTimeout(timer));}
+function stopWatch(){clearInterval(watchdog);watchdog=null;}
+function failure(error,reload=false){
+  stopWatch();busy=false;starting=false;needsReload=reload;setPhase('error');
+  start.hidden=false;start.disabled=false;start.textContent=reload?'重新打开游戏':'继续下载 / 重试';
+  message.textContent=String(error.message||error);progress.hidden=true;
+}
+function showReady(){
+  if(starting||window.gameReady)return;
+  installed=true;window.offlineReady=true;busy=false;stopWatch();setPhase('ready');
+  start.disabled=false;start.hidden=false;start.textContent='开始游戏';progress.hidden=true;
+  message.textContent='离线就绪 · 第 1–9 关已保存在本机';
+  connection.textContent='Safari 分享 → 添加到主屏幕。显示离线就绪后，可断网游玩。';
+}
+function acceptVersion(m){
+  if(window.gameReady||starting)return false;
+  if(m.version&&m.version!==buildVersion){
     const key='clockwork-reload-'+m.version;
     if(!sessionStorage.getItem(key)){sessionStorage.setItem(key,'1');location.reload();}
-    else {message.textContent='新版本准备中，请稍候关闭并重新打开。';start.disabled=true;}
+    else failure('页面和离线文件版本不同，请重新打开以完成更新。',true);
     return false;
   }
   return true;
 }
-navigator.serviceWorker?.addEventListener('controllerchange',()=>{
-  if(!window.gameReady && !starting)navigator.serviceWorker.controller?.postMessage({type:'STATUS'});
-});
 async function setup(){
-  if(!window.isSecureContext||!('serviceWorker' in navigator))throw new Error('离线版需要用 Safari 打开 HTTPS 链接，请勿直接打开本地 HTML 文件。');
-  const current=await navigator.serviceWorker.getRegistration('./');
-  registration=await navigator.serviceWorker.register('./offline-worker.js',{scope:'./'});
-  if(current && navigator.onLine) registration.update().catch(()=>{});
-  await navigator.serviceWorker.ready;
-  if(!navigator.serviceWorker.controller)await new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>reject(new Error('离线组件未就绪，请刷新重试。')),15000);
-    navigator.serviceWorker.addEventListener('controllerchange',()=>{clearTimeout(timeout);resolve()},{once:true});
-  });
-  navigator.serviceWorker.controller.postMessage({type:'STATUS'});
+  if(!window.isSecureContext||!('serviceWorker' in navigator))throw Error('请用 Safari 打开游戏的 HTTPS 地址。');
+  // An installed offline game must not wait for a network update before opening.
+  if(navigator.serviceWorker.controller){
+    navigator.serviceWorker.getRegistration('./').then(r=>{if(navigator.onLine)r?.update().catch(()=>{});}).catch(()=>{});
+    return;
+  }
+  message.textContent='正在检查离线组件…';
+  await deadline(navigator.serviceWorker.register('./offline-worker.js',{scope:'./',updateViaCache:'none'}),25000,'连接暂时没有响应，请点击重试。');
+  await deadline(new Promise(resolve=>{
+    if(navigator.serviceWorker.controller)return resolve();
+    const changed=()=>{if(navigator.serviceWorker.controller){navigator.serviceWorker.removeEventListener('controllerchange',changed);resolve();}};
+    navigator.serviceWorker.addEventListener('controllerchange',changed);
+  }),30000,'离线组件下载未完成，请点击重试。');
+}
+function ensureSetup(){
+  if(!setupPromise)setupPromise=setup().catch(e=>{setupPromise=null;throw e;});
+  return setupPromise;
+}
+function queryStatus(){
+  return deadline(new Promise((resolve,reject)=>{
+    const waiter={resolve,reject};statusWaiters.add(waiter);
+    if(!navigator.serviceWorker.controller){statusWaiters.delete(waiter);reject(Error('离线组件未连接，请重新打开。'));return;}
+    navigator.serviceWorker.controller.postMessage({type:'STATUS'});
+    setTimeout(()=>statusWaiters.delete(waiter),10000);
+  }),10000,'离线检查没有响应，请重新打开后重试。');
 }
 navigator.serviceWorker?.addEventListener('message',event=>{
-  const m=event.data;
-  if((m.type==='STATUS'||m.type==='READY')&&!checkVersion(m))return;
-  if(m.type==='PROGRESS'){progress.hidden=false;progress.max=m.total;progress.value=m.loaded;message.textContent='正在保存到本机 '+Math.round(m.loaded/m.total*100)+'% · 请保持此页面打开';}
-  if(m.type==='STATUS'&&m.ready||m.type==='READY'){
-    installed=true;busy=false;start.disabled=false;start.hidden=false;start.textContent='开始游戏';progress.hidden=true;
-    message.textContent='离线就绪 · 第 1–9 关已保存在本机';
-    connection.textContent='Safari 分享 → 添加到主屏幕。请从主屏幕图标打开一次，确认显示“离线就绪”。';
-    window.offlineReady=true;
+  const m=event.data;if(!m||!acceptVersion(m))return;
+  if(m.type==='STATUS'){
+    installed=!!m.ready;window.offlineReady=installed;
+    for(const waiter of statusWaiters)waiter.resolve(m);statusWaiters.clear();
+    if(installed)showReady();
+    else if(phase==='checking'){
+      busy=false;start.disabled=false;start.textContent='下载并准备离线游戏';
+      message.textContent='需要下载约 72 MB，下载进度会实时显示；中断后可以继续。';setPhase('download-needed');
+    }
   }
-  if(m.type==='ERROR')failure(m.message);
+  if(m.type==='PROGRESS'){
+    lastProgress=Date.now();progress.hidden=false;progress.max=m.total;progress.value=m.loaded;
+    const mb=n=>(n/1048576).toFixed(1);
+    message.textContent=(m.note?m.note+' · ':'正在下载 ')+mb(m.loaded)+' / '+mb(m.total)+' MB（'+Math.floor(m.loaded/m.total*100)+'%）';
+  }
+  if(m.type==='READY')showReady();
+  if(m.type==='ERROR'){
+    for(const waiter of statusWaiters)waiter.reject(Error(m.message));statusWaiters.clear();failure(m.message);
+  }
 });
-const setupPromise=setup().catch(error=>{failure(error);throw error;});
-setupPromise.catch(()=>{});
+navigator.serviceWorker?.addEventListener('controllerchange',()=>{
+  if(!window.gameReady&&!starting)queryStatus().catch(e=>failure(e));
+});
+async function loadEngine(){
+  if(window.Engine)return;
+  await deadline(new Promise((resolve,reject)=>{
+    const script=document.createElement('script');script.src='index.js';script.async=true;
+    script.onload=()=>resolve();script.onerror=()=>{script.remove();reject(Error('游戏程序未加载，请重试。'));};
+    document.head.appendChild(script);
+  }),20000,'游戏程序加载超时，请重新打开。');
+}
+document.addEventListener('contextmenu',e=>e.preventDefault());
+document.addEventListener('gesturestart',e=>e.preventDefault(),{passive:false});
+connection.textContent='首次联网下载；已保存的部分会保留，重试无需从头开始。';
+start.disabled=true;start.textContent='正在检查…';
+ensureSetup().then(queryStatus).catch(e=>failure(e));
 start.addEventListener('click',async()=>{
+  if(needsReload){location.reload();return;}
   if(busy)return;
   busy=true;start.disabled=true;
   try{
-    await setupPromise;
+    await ensureSetup();await queryStatus();
     if(!installed){
-      if(navigator.storage?.persist)await navigator.storage.persist().catch(()=>{});
-      message.textContent='正在下载离线游戏，请稍候…';progress.hidden=false;
+      busy=true;start.disabled=true;setPhase('downloading');lastProgress=Date.now();
+      message.textContent='正在连接下载，已完成的部分将自动续传…';progress.hidden=false;
+      stopWatch();watchdog=setInterval(()=>{if(Date.now()-lastProgress>55000)failure('下载暂时没有响应。已下载部分已保留，点击继续下载。');},1000);
       navigator.serviceWorker.controller.postMessage({type:'INSTALL'});return;
     }
+    busy=true;starting=true;setPhase('starting');start.hidden=true;progress.hidden=false;
+    message.textContent='正在读取已下载的游戏…';
+    await loadEngine();
     const missing=Engine.getMissingFeatures({threads:false});
-    if(missing.length)throw new Error('iPad 浏览器缺少 '+missing.join('、')+'，请升级 iPadOS 后重试。');
-    starting=true;start.hidden=true;message.textContent='正在启动游戏…';
-    await engine.startGame({canvas:document.getElementById('canvas'),canvasResizePolicy:0});
-    document.getElementById('loading').remove();document.getElementById('canvas').focus();window.gameReady=true;
-  }catch(error){starting=false;console.error(error);failure(error);}
+    if(missing.length)throw Error('浏览器缺少 '+missing.join('、')+'，请升级 iPadOS 后重试。');
+    engine=new Engine(config);const began=Date.now();let bytes='';
+    stopWatch();watchdog=setInterval(()=>{message.textContent=(bytes||'正在启动游戏')+' · '+Math.floor((Date.now()-began)/1000)+' 秒';},1000);
+    await deadline(engine.startGame({canvas:document.getElementById('canvas'),canvasResizePolicy:0,onProgress:(current,total)=>{
+      if(total>0){progress.max=total;progress.value=current;bytes='读取游戏 '+Math.floor(current/total*100)+'%';}
+    }}),120000,'游戏启动未完成，请重新打开后重试。');
+    stopWatch();setPhase('playing');window.gameReady=true;document.getElementById('loading').remove();document.getElementById('canvas').focus();
+  }catch(e){failure(e,starting);}
 });
 
 </script>
